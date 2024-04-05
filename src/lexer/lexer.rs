@@ -1,6 +1,5 @@
 use std::mem;
 
-use crate::lexer::error::Error;
 use crate::lexer::token::Token;
 use crate::utils::InternedString;
 
@@ -29,10 +28,6 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         self.next
     }
 
-    fn peek_or_eof(&self) -> Result<char, Error> {
-        self.peek().ok_or(Error::UnexpectedEOF)
-    }
-
     fn consume(&mut self) -> char {
         mem::replace(&mut self.next, self.it.next()).expect("Lexer: Can consume character")
     }
@@ -54,8 +49,10 @@ impl<I: Iterator<Item = char>> Lexer<I> {
     fn read_identifier(&mut self) -> InternedString {
         let mut s = String::new();
         while let Some(c) = self.peek() {
-            if c.is_whitespace() {
-                break;
+            match c {
+                '(' | ')' => break,
+                c if c.is_whitespace() => break,
+                _ => (),
             }
             s.push(c);
             self.consume();
@@ -63,45 +60,45 @@ impl<I: Iterator<Item = char>> Lexer<I> {
         s.into()
     }
 
-    fn next_token(&mut self) -> Result<Token, Error> {
+    fn next_token(&mut self) -> Token {
         macro_rules! ok {
             ($ret:expr) => {{
                 self.consume();
-                return Ok($ret);
+                return $ret;
             }};
         }
 
-        match self.peek_or_eof()? {
+        match self.peek().expect("Can peek") {
             '(' => ok!(Token::LParen),
             ')' => ok!(Token::RParen),
             ':' => {
                 self.consume();
                 match self.peek() {
                     Some('=') => ok!(Token::Assign),
-                    _ => return Ok(Token::Colon),
+                    _ => return Token::Colon,
                 }
             }
             '-' => {
                 self.consume();
                 match self.peek() {
                     Some('>') => ok!(Token::ThinArrow),
-                    _ => return Ok(Token::Identifier("-".into())),
+                    _ => return Token::Identifier("-".into()),
                 }
             }
             '=' => {
                 self.consume();
                 match self.peek() {
                     Some('>') => ok!(Token::ThickArrow),
-                    _ => return Ok(Token::Identifier("=".into())),
+                    _ => return Token::Identifier("=".into()),
                 }
             }
-            _ => Ok(Token::Identifier(self.read_identifier())),
+            _ => Token::Identifier(self.read_identifier()),
         }
     }
 }
 
 impl<I: Iterator<Item = char>> Iterator for Lexer<I> {
-    type Item = Result<Token, Error>;
+    type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.skip_whitespace();
@@ -110,5 +107,84 @@ impl<I: Iterator<Item = char>> Iterator for Lexer<I> {
         }
 
         Some(self.next_token())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Lexer;
+    use crate::lexer::token::Token;
+
+    fn lex(s: &str) -> Vec<Token> {
+        Lexer::new(s.chars()).collect()
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(lex(""), [])
+    }
+
+    #[test]
+    fn comment() {
+        assert_eq!(lex("#this is a comment"), [])
+    }
+
+    #[test]
+    fn multiline_comment() {
+        assert_eq!(
+            lex(r#"
+            #this is comment line 1
+            #this is comment line 2
+        "#),
+            []
+        )
+    }
+
+    #[test]
+    fn parentheses() {
+        use Token::*;
+        assert_eq!(
+            lex("(()(()))"),
+            [LParen, LParen, RParen, LParen, LParen, RParen, RParen, RParen,]
+        )
+    }
+
+    #[test]
+    fn complex() {
+        use Token::*;
+
+        macro_rules! ident {
+            ($e:expr) => {
+                Identifier(($e).into())
+            };
+        }
+
+        assert_eq!(
+            lex(r#"
+# this is a comment
+:= a 1
+:= b 2
+:= c (+ a b)
+∈ c ℕ
+        "#),
+            [
+                Assign,
+                ident!("a"),
+                ident!("1"),
+                Assign,
+                ident!("b"),
+                ident!("2"),
+                Assign,
+                ident!("c"),
+                LParen,
+                ident!("+"),
+                ident!("a"),
+                ident!("b"),
+                RParen,
+                ident!("∈"),
+                ident!("c"),
+                ident!("ℕ")
+            ]
+        )
     }
 }

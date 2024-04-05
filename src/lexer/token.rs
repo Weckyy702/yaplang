@@ -1,6 +1,6 @@
 use crate::utils::InternedString;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Token {
     LParen,
     RParen,
